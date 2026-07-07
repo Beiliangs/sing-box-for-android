@@ -9,7 +9,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive' # 强制拉取所有子模块（包括 sing-box 核心）
+          submodules: 'recursive' # 必须拉取子模块，否则找不到 Libbox 核心
           fetch-depth: 0
 
       - name: Setup Java
@@ -26,34 +26,27 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Gomobile
-        run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          gomobile init
-          # 将 Go 的 bin 目录加入系统路径
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-
       - name: Patch AnyTLS Version (Brute Force)
         run: |
-          # 针对 Stable 分支，核心代码通常在子模块中，直接在当前目录全局搜索修改
-          echo "Unlocking permissions and patching source code..."
+          # 给予源码目录读写权限
           chmod -R +w .
           
-          # 暴力修改所有 version.go 文件，无论它是在核心库还是子模块中
+          # 全局搜索所有 version.go，将 "sing-box" 替换为 "anytls"
+          # 这会同时修改 SFA 自身和子模块（third_party/sing-box）中的代码
           find . -name "version.go" -exec sed -i 's/"sing-box"/"anytls"/g' {} +
           
-          # 验证修改
-          echo "Verifying patches in source code:"
+          # 验证修改结果
+          echo "Checking patch result:"
           find . -name "version.go" -exec grep -H "Version =" {} + || true
 
       - name: Build APK
         run: |
+          # 设置 NDK 路径（GitHub Runner 默认路径）
+          export ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk-bundle
+          
           chmod +x gradlew
-          # 使用 --stacktrace 观察如果 libbox 编译失败的具体原因
-          ./gradlew :app:assembleDebug --no-daemon --stacktrace
-        env:
-          # 某些版本需要显式指定 NDK 路径
-          ANDROID_NDK_HOME: ${{ sed -n 's/.*ndk.dir=\(.*\)/\1/p' local.properties }}
+          # 运行构建任务
+          ./gradlew :app:assembleDebug --no-daemon
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
