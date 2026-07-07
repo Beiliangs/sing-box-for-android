@@ -35,7 +35,7 @@ jobs:
           
           # 2. 强制下载 anytls 依赖库（使用 master 分支或最新版）
           # 这一步会将源码拉取到当前用户的 Go 缓存目录 (~/go/pkg/mod)
-          go mod download github.com/anytls/sing-anytls@master
+          go mod download github.com/anytls/sing-anytls@main
           
           # 3. 回到根目录并执行全局搜索替换
           cd ..
