@@ -29,28 +29,32 @@ jobs:
 
       - name: Patch AnyTLS Version
         run: |
-          # 1. 创建临时模块并下载依赖
-          mkdir temp_patch
-          cd temp_patch
-          go mod init temp_patch
-          # 这里直接拉取最新的 main 分支
-          go mod download github.com/anytls/sing-anytls@main
-          
-          # 2. 【关键步骤】给 Go 缓存目录增加写权限
-          # Go 默认为了安全将缓存设为只读，必须手动改为可写才能用 sed 修改
-          chmod -R +w ~/go/pkg/mod/github.com/anytls/
-          
-          # 3. 执行替换字符串
-          find ~/go/pkg/mod/github.com/anytls/ -name "version.go" -exec sed -i 's/"sing-box"/"anytls"/g' {} +
-          
-          # 4. 验证修改是否成功
-          echo "Checking if patch is applied:"
-          find ~/go/pkg/mod/github.com/anytls/ -name "version.go" -exec grep "Version =" {} +
-          
-          # 5. 清理临时目录
-          cd ..
-          rm -rf temp_patch
-          echo "Success: AnyTLS version string has been patched."
+          # 1. 尝试在当前目录下寻找 go.mod 以防它在深层目录
+          GO_MOD_PATH=$(find . -name "go.mod" | head -n 1)
+          if [ -n "$GO_MOD_PATH" ]; then
+            cd $(dirname $GO_MOD_PATH)
+            go mod download github.com/anytls/sing-anytls@main || true
+            cd -
+          fi
+
+          # 2. 暴力解除所有可能的 Go 路径和当前目录的只读限制
+          echo "Unlocking permissions..."
+          chmod -R +w . || true
+          [ -d ~/go/pkg/mod ] && chmod -R +w ~/go/pkg/mod || true
+
+          # 3. 全局搜索并修改所有 anytls 相关的 version.go
+          # 我们同时搜索工作目录和 Go 缓存目录
+          echo "Searching and patching..."
+          # 修改工作目录（针对 submodule 或 vendor）
+          find . -name "version.go" -path "*anytls*" -exec sed -i 's/"sing-box"/"anytls"/g' {} + || true
+          # 修改 Go 缓存（针对 Go Mod 模式）
+          find /home/runner/go/pkg/mod -name "version.go" -path "*anytls*" -exec sed -i 's/"sing-box"/"anytls"/g' {} + || true
+
+          # 4. 验证修改结果（加上 || true 防止 grep 失败导致 Action 中断）
+          echo "Verifying patch..."
+          find . -name "version.go" -path "*anytls*" -exec grep -H "Version =" {} + || true
+          find /home/runner/go/pkg/mod -name "version.go" -path "*anytls*" -exec grep -H "Version =" {} + || true
+          echo "Patching step finished."
 
       - name: Build APK
         run: |
