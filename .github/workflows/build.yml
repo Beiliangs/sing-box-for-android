@@ -1,0 +1,46 @@
+name: Build Patched SFA
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: app/go.sum # 明确告诉它 go.sum 在哪
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Patch AnyTLS Version
+        run: |
+          cd app
+          go mod download github.com/anytls/sing-anytls
+          find ~/go/pkg/mod/github.com/anytls/ -name "version.go" -exec sed -i 's/"sing-box"/"anytls"/g' {} +
+          echo "Success: AnyTLS version string has been patched."
+
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sfa-patched-apk
+          path: app/build/outputs/apk/debug/*.apk
