@@ -9,7 +9,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive'
+          submodules: 'recursive' # 强制拉取所有子模块（包括 sing-box 核心）
           fetch-depth: 0
 
       - name: Setup Java
@@ -22,44 +22,38 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-          cache-dependency-path: app/go.sum # 明确告诉它 go.sum 在哪
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Patch AnyTLS Version
+      - name: Install Gomobile
         run: |
-          # 1. 尝试在当前目录下寻找 go.mod 以防它在深层目录
-          GO_MOD_PATH=$(find . -name "go.mod" | head -n 1)
-          if [ -n "$GO_MOD_PATH" ]; then
-            cd $(dirname $GO_MOD_PATH)
-            go mod download github.com/anytls/sing-anytls@main || true
-            cd -
-          fi
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          gomobile init
+          # 将 Go 的 bin 目录加入系统路径
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-          # 2. 暴力解除所有可能的 Go 路径和当前目录的只读限制
-          echo "Unlocking permissions..."
-          chmod -R +w . || true
-          [ -d ~/go/pkg/mod ] && chmod -R +w ~/go/pkg/mod || true
-
-          # 3. 全局搜索并修改所有 anytls 相关的 version.go
-          # 我们同时搜索工作目录和 Go 缓存目录
-          echo "Searching and patching..."
-          # 修改工作目录（针对 submodule 或 vendor）
-          find . -name "version.go" -path "*anytls*" -exec sed -i 's/"sing-box"/"anytls"/g' {} + || true
-          # 修改 Go 缓存（针对 Go Mod 模式）
-          find /home/runner/go/pkg/mod -name "version.go" -path "*anytls*" -exec sed -i 's/"sing-box"/"anytls"/g' {} + || true
-
-          # 4. 验证修改结果（加上 || true 防止 grep 失败导致 Action 中断）
-          echo "Verifying patch..."
-          find . -name "version.go" -path "*anytls*" -exec grep -H "Version =" {} + || true
-          find /home/runner/go/pkg/mod -name "version.go" -path "*anytls*" -exec grep -H "Version =" {} + || true
-          echo "Patching step finished."
+      - name: Patch AnyTLS Version (Brute Force)
+        run: |
+          # 针对 Stable 分支，核心代码通常在子模块中，直接在当前目录全局搜索修改
+          echo "Unlocking permissions and patching source code..."
+          chmod -R +w .
+          
+          # 暴力修改所有 version.go 文件，无论它是在核心库还是子模块中
+          find . -name "version.go" -exec sed -i 's/"sing-box"/"anytls"/g' {} +
+          
+          # 验证修改
+          echo "Verifying patches in source code:"
+          find . -name "version.go" -exec grep -H "Version =" {} + || true
 
       - name: Build APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          # 使用 --stacktrace 观察如果 libbox 编译失败的具体原因
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        env:
+          # 某些版本需要显式指定 NDK 路径
+          ANDROID_NDK_HOME: ${{ sed -n 's/.*ndk.dir=\(.*\)/\1/p' local.properties }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
