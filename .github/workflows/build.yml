@@ -29,23 +29,28 @@ jobs:
 
       - name: Patch AnyTLS Version
         run: |
-          # 1. 创建一个临时目录并初始化一个临时 Go 模块
+          # 1. 创建临时模块并下载依赖
           mkdir temp_patch
           cd temp_patch
           go mod init temp_patch
-          
-          # 2. 强制下载 anytls 依赖库（使用 master 分支或最新版）
-          # 这一步会将源码拉取到当前用户的 Go 缓存目录 (~/go/pkg/mod)
+          # 这里直接拉取最新的 main 分支
           go mod download github.com/anytls/sing-anytls@main
           
-          # 3. 回到根目录并执行全局搜索替换
-          cd ..
-          echo "Searching and patching version.go in Go cache..."
+          # 2. 【关键步骤】给 Go 缓存目录增加写权限
+          # Go 默认为了安全将缓存设为只读，必须手动改为可写才能用 sed 修改
+          chmod -R +w ~/go/pkg/mod/github.com/anytls/
+          
+          # 3. 执行替换字符串
           find ~/go/pkg/mod/github.com/anytls/ -name "version.go" -exec sed -i 's/"sing-box"/"anytls"/g' {} +
           
-          # 4. 验证是否替换成功（可选）
+          # 4. 验证修改是否成功
+          echo "Checking if patch is applied:"
           find ~/go/pkg/mod/github.com/anytls/ -name "version.go" -exec grep "Version =" {} +
-          echo "Success: AnyTLS version string has been patched globally."
+          
+          # 5. 清理临时目录
+          cd ..
+          rm -rf temp_patch
+          echo "Success: AnyTLS version string has been patched."
 
       - name: Build APK
         run: |
