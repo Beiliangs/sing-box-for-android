@@ -9,7 +9,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive' # 必须拉取子模块，否则找不到 Libbox 核心
+          submodules: 'recursive' # 深度拉取子模块
           fetch-depth: 0
 
       - name: Setup Java
@@ -26,30 +26,44 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Patch AnyTLS Version (Brute Force)
+      - name: Patch AnyTLS Version (The Master Patch)
         run: |
-          # 给予源码目录读写权限
-          chmod -R +w .
-          
-          # 全局搜索所有 version.go，将 "sing-box" 替换为 "anytls"
-          # 这会同时修改 SFA 自身和子模块（third_party/sing-box）中的代码
-          find . -name "version.go" -exec sed -i 's/"sing-box"/"anytls"/g' {} +
-          
-          # 验证修改结果
-          echo "Checking patch result:"
+          # 1. 无论源码在哪，先强制下载 AnyTLS 库到全局缓存
+          # 这样即使 SFA 编译时去下载，拿到的也是我们改过的缓存
+          mkdir -p temp_patch && cd temp_patch
+          go mod init temp_patch
+          go mod download github.com/anytls/sing-anytls@main
+          cd ..
+
+          # 2. 获取 Go 缓存的真实路径并解锁权限
+          GOMODCACHE=$(go env GOMODCACHE)
+          echo "Go Mod Cache is at: $GOMODCACHE"
+          chmod -R +w $GOMODCACHE || true
+          chmod -R +w . || true
+
+          # 3. 暴力搜索并修改：同时修改“下载的缓存”和“本地源码”
+          # 确保万无一失
+          echo "Applying string replacement..."
+          find $GOMODCACHE -name "version.go" -exec sed -i 's/"sing-box"/"anytls"/g' {} + || true
+          find . -name "version.go" -exec sed -i 's/"sing-box"/"anytls"/g' {} + || true
+
+          # 4. 验证补丁是否成功 (这次如果成功，一定会输出路径)
+          echo "Verification Results:"
+          find $GOMODCACHE -name "version.go" -exec grep -H "Version =" {} + || true
           find . -name "version.go" -exec grep -H "Version =" {} + || true
 
-      - name: Build APK
+      - name: Build Libbox & APK
         run: |
-          # 设置 NDK 路径（GitHub Runner 默认路径）
+          # 必须安装 gomobile，这是编译 Go 核心的关键
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          $(go env GOPATH)/bin/gomobile init
+          export PATH=$PATH:$(go env GOPATH)/bin
+          
+          # 设置 NDK 路径
           export ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk-bundle
           
           chmod +x gradlew
-          # 运行构建任务
-          ./gradlew :app:assembleDebug --no-daemon
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sfa-patched-apk
-          path: app/build/outputs/apk/debug/*.apk
+          # 尝试清理并编译。先执行 libbox 编译任务（如果存在），再编译 APK
+          # 这样可以解决 Unresolved reference 'Libbox'
+          ./gradlew clean
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
